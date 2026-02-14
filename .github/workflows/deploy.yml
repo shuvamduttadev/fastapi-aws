@@ -17,6 +17,7 @@ jobs:
   deploy:
     name: Deploy to ECS
     runs-on: ubuntu-latest
+    environment: prod
     
     steps:
       # Step 1: Checkout code
