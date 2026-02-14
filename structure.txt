@@ -1,0 +1,73 @@
+project-root/
+│
+├── app/                    ← Your FastAPI application package
+│
+├── alembic/                ← Database migrations
+├── tests/                  ← All test cases
+├── scripts/                ← Utility / maintenance scripts
+│
+├── .env                    ← Environment variables
+├── .env.example            ← Sample env file
+├── requirements.txt        ← Dependencies (or pyproject.toml)
+├── pyproject.toml          ← Modern dependency management
+├── alembic.ini             ← Alembic config
+│
+├── Dockerfile              ← Container build
+├── docker-compose.yml      ← Local dev services (db, redis)
+│
+├── README.md               ← Documentation
+├── .gitignore
+└── Makefile                ← Dev shortcuts (optional but common)
+
+
+
+
+app/
+│
+├── main.py
+├── core/
+│   ├── config.py
+│   ├── security.py
+│   ├── dependencies.py
+│   └── logging.py
+│
+├── api/
+│   ├── deps.py
+│   ├── v1/
+│   │   ├── api.py
+│   │   └── endpoints/
+│   │       ├── users.py
+│   │       ├── auth.py
+│   │       └── orders.py
+│
+├── schemas/
+│   ├── user.py
+│   ├── order.py
+│   └── token.py
+│
+├── models/
+│   ├── user.py
+│   └── order.py
+│
+├── services/
+│   ├── user_service.py
+│   ├── auth_service.py
+│   └── order_service.py
+│
+├── repositories/
+│   ├── user_repository.py
+│   └── order_repository.py
+│
+├── db/
+│   ├── base.py
+│   ├── session.py
+│   └── migrations/
+│
+├── utils/
+│   ├── email.py
+│   └── helpers.py
+│
+└── tests/
+    ├── conftest.py
+    ├── test_users.py
+    └── test_orders.py
