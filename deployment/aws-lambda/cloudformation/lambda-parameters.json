@@ -1,0 +1,30 @@
+[
+  {
+    "ParameterKey": "ProjectName",
+    "ParameterValue": "fastapi-lambda"
+  },
+  {
+    "ParameterKey": "Environment",
+    "ParameterValue": "production"
+  },
+  {
+    "ParameterKey": "LambdaTimeout",
+    "ParameterValue": "30"
+  },
+  {
+    "ParameterKey": "LambdaMemorySize",
+    "ParameterValue": "512"
+  },
+  {
+    "ParameterKey": "LogRetentionDays",
+    "ParameterValue": "7"
+  },
+  {
+    "ParameterKey": "CloudFrontPriceClass",
+    "ParameterValue": "PriceClass_All"
+  },
+  {
+    "ParameterKey": "ApiGatewayStageName",
+    "ParameterValue": "prod"
+  }
+]

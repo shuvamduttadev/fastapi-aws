@@ -19,3 +19,6 @@ venv/
 
 # Environment variables
 .env
+
+lambda_package/
+lambda-deployment-package.zip

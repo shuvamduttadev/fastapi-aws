@@ -1,0 +1,470 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'FastAPI Serverless - Lambda + API Gateway + CloudFront in ap-south-1'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: fastapi-lambda
+    Description: Project name for resource naming
+    AllowedPattern: ^[a-z0-9-]+$
+
+  Environment:
+    Type: String
+    Default: production
+    AllowedValues:
+      - development
+      - staging
+      - production
+    Description: Environment name
+
+  LambdaTimeout:
+    Type: Number
+    Default: 30
+    MinValue: 3
+    MaxValue: 900
+    Description: Lambda function timeout in seconds
+
+  LambdaMemorySize:
+    Type: Number
+    Default: 512
+    AllowedValues: [128, 256, 512, 1024, 1536, 2048, 3008, 4096, 5120, 6144, 7168, 8192, 9216, 10240]
+    Description: Lambda function memory in MB
+
+  LogRetentionDays:
+    Type: Number
+    Default: 7
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1827, 3653]
+    Description: CloudWatch log retention in days
+
+  CloudFrontPriceClass:
+    Type: String
+    Default: PriceClass_All
+    AllowedValues:
+      - PriceClass_100
+      - PriceClass_200
+      - PriceClass_All
+    Description: CloudFront distribution price class
+
+  ApiGatewayStageName:
+    Type: String
+    Default: prod
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+    Description: API Gateway stage name
+
+Resources:
+  # ==========================================
+  # S3 Bucket for Lambda Code
+  # ==========================================
+
+  LambdaCodeBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${ProjectName}-lambda-code-${AWS::AccountId}
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldVersions
+            Status: Enabled
+            NoncurrentVersionExpirationInDays: 30
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-lambda-code
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ==========================================
+  # IAM Role for Lambda
+  # ==========================================
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-lambda-execution-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: LambdaCloudWatchLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-*
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-lambda-execution-role
+        - Key: Environment
+          Value: !Ref Environment
+
+  # Add additional policies for your application
+  # LambdaCustomPolicy:
+  #   Type: AWS::IAM::Policy
+  #   Properties:
+  #     PolicyName: !Sub ${ProjectName}-lambda-custom-policy
+  #     Roles:
+  #       - !Ref LambdaExecutionRole
+  #     PolicyDocument:
+  #       Version: '2012-10-17'
+  #       Statement:
+  #         - Effect: Allow
+  #           Action:
+  #             - dynamodb:GetItem
+  #             - dynamodb:PutItem
+  #             - dynamodb:Query
+  #           Resource: !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/*
+
+  # ==========================================
+  # CloudWatch Logs
+  # ==========================================
+
+  LambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ProjectName}-function
+      RetentionInDays: !Ref LogRetentionDays
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-lambda-logs
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ==========================================
+  # Lambda Function
+  # ==========================================
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: LambdaLogGroup
+    Properties:
+      FunctionName: !Sub ${ProjectName}-function
+      Runtime: python3.11  # Lambda doesn't support 3.13 yet
+      Handler: handler.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: !Ref LambdaTimeout
+      MemorySize: !Ref LambdaMemorySize
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          LOG_LEVEL: INFO
+          POWERTOOLS_SERVICE_NAME: !Ref ProjectName
+      Code:
+        ZipFile: |
+          def handler(event, context):
+              return {'statusCode': 200, 'body': 'Placeholder'}
+      # We'll update with real code after stack is created
+      Description: !Sub ${ProjectName} FastAPI Lambda function
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-function
+        - Key: Environment
+          Value: !Ref Environment
+
+  # Lambda Version
+  LambdaVersion:
+    Type: AWS::Lambda::Version
+    Properties:
+      FunctionName: !Ref LambdaFunction
+      Description: Initial version
+
+  # Lambda Alias
+  LambdaAlias:
+    Type: AWS::Lambda::Alias
+    Properties:
+      FunctionName: !Ref LambdaFunction
+      FunctionVersion: !GetAtt LambdaVersion.Version
+      Name: !Ref ApiGatewayStageName
+
+  # ==========================================
+  # API Gateway (HTTP API - cheaper and simpler)
+  # ==========================================
+
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub ${ProjectName}-api
+      Description: !Sub ${ProjectName} HTTP API
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins:
+          - '*'
+        AllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - PATCH
+          - OPTIONS
+        AllowHeaders:
+          - '*'
+        MaxAge: 300
+      Tags:
+        Name: !Sub ${ProjectName}-api
+        Environment: !Ref Environment
+
+  HttpApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaFunction.Arn}/invocations
+      PayloadFormatVersion: '2.0'
+      TimeoutInMillis: 30000
+
+  HttpApiRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: $default
+      Target: !Sub integrations/${HttpApiIntegration}
+
+  HttpApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: !Ref ApiGatewayStageName
+      AutoDeploy: true
+      Description: !Sub ${ProjectName} ${ApiGatewayStageName} stage
+      AccessLogSettings:
+        DestinationArn: !GetAtt ApiGatewayLogGroup.Arn
+        Format: '$context.requestId $context.error.message $context.error.messageString'
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 100
+        ThrottlingRateLimit: 50
+      Tags:
+        Name: !Sub ${ProjectName}-${ApiGatewayStageName}
+        Environment: !Ref Environment
+
+  # Lambda Permission for API Gateway
+  LambdaApiGatewayPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*
+
+  # API Gateway Logs
+  ApiGatewayLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/apigateway/${ProjectName}
+      RetentionInDays: !Ref LogRetentionDays
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-api-logs
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ==========================================
+  # CloudFront Distribution
+  # ==========================================
+
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub ${ProjectName} CloudFront Distribution
+        HttpVersion: http2and3
+        PriceClass: !Ref CloudFrontPriceClass
+        Origins:
+          - Id: !Sub ApiGateway-${ProjectName}
+            DomainName: !Sub ${HttpApi}.execute-api.${AWS::Region}.amazonaws.com
+            CustomOriginConfig:
+              HTTPPort: 80
+              HTTPSPort: 443
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols:
+                - TLSv1.2
+              OriginReadTimeout: 60
+              OriginKeepaliveTimeout: 5
+            OriginPath: !Sub /${ApiGatewayStageName}
+        DefaultCacheBehavior:
+          TargetOriginId: !Sub ApiGateway-${ProjectName}
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - DELETE
+            - GET
+            - HEAD
+            - OPTIONS
+            - PATCH
+            - POST
+            - PUT
+          CachedMethods:
+            - GET
+            - HEAD
+          Compress: true
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad  # CachingDisabled
+          OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac  # AllViewerExceptHostHeader
+        Restrictions:
+          GeoRestriction:
+            RestrictionType: none
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+          MinimumProtocolVersion: TLSv1.2_2021
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-cloudfront
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ==========================================
+  # CloudWatch Alarms
+  # ==========================================
+
+  LambdaErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${ProjectName}-lambda-errors
+      AlarmDescription: Alert when Lambda function has errors
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref LambdaFunction
+
+  LambdaThrottlesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${ProjectName}-lambda-throttles
+      AlarmDescription: Alert when Lambda function is throttled
+      MetricName: Throttles
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref LambdaFunction
+
+  LambdaDurationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${ProjectName}-lambda-duration
+      AlarmDescription: Alert when Lambda duration is high
+      MetricName: Duration
+      Namespace: AWS/Lambda
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 25000  # 25 seconds
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref LambdaFunction
+
+  ApiGateway5XXErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${ProjectName}-api-5xx-errors
+      AlarmDescription: Alert when API Gateway has 5XX errors
+      MetricName: 5XXError
+      Namespace: AWS/ApiGateway
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 10
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      Dimensions:
+        - Name: ApiId
+          Value: !Ref HttpApi
+        - Name: Stage
+          Value: !Ref ApiGatewayStageName
+
+# ==========================================
+# Outputs
+# ==========================================
+
+Outputs:
+  LambdaFunctionArn:
+    Description: Lambda Function ARN
+    Value: !GetAtt LambdaFunction.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-LambdaFunctionArn
+
+  LambdaFunctionName:
+    Description: Lambda Function Name
+    Value: !Ref LambdaFunction
+    Export:
+      Name: !Sub ${AWS::StackName}-LambdaFunctionName
+
+  ApiGatewayId:
+    Description: API Gateway ID
+    Value: !Ref HttpApi
+    Export:
+      Name: !Sub ${AWS::StackName}-ApiGatewayId
+
+  ApiGatewayEndpoint:
+    Description: API Gateway Endpoint
+    Value: !Sub https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/${ApiGatewayStageName}
+    Export:
+      Name: !Sub ${AWS::StackName}-ApiGatewayEndpoint
+
+  CloudFrontDistributionId:
+    Description: CloudFront Distribution ID
+    Value: !Ref CloudFrontDistribution
+    Export:
+      Name: !Sub ${AWS::StackName}-CloudFrontDistributionId
+
+  CloudFrontDomainName:
+    Description: CloudFront Distribution Domain Name
+    Value: !GetAtt CloudFrontDistribution.DomainName
+    Export:
+      Name: !Sub ${AWS::StackName}-CloudFrontDomainName
+
+  CloudFrontURL:
+    Description: CloudFront URL (HTTPS)
+    Value: !Sub https://${CloudFrontDistribution.DomainName}
+    Export:
+      Name: !Sub ${AWS::StackName}-CloudFrontURL
+
+  LambdaCodeBucket:
+    Description: S3 Bucket for Lambda Code
+    Value: !Ref LambdaCodeBucket
+    Export:
+      Name: !Sub ${AWS::StackName}-LambdaCodeBucket
+
+  ApiDocsURL:
+    Description: API Documentation URL
+    Value: !Sub https://${CloudFrontDistribution.DomainName}/docs
+
+  HealthCheckURL:
+    Description: Health Check URL
+    Value: !Sub https://${CloudFrontDistribution.DomainName}/health
+
+  LogsCommand:
+    Description: AWS CLI command to view Lambda logs
+    Value: !Sub aws logs tail /aws/lambda/${ProjectName}-function --follow --region ${AWS::Region}
